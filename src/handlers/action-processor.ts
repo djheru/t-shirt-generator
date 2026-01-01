@@ -5,21 +5,21 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   copyImage,
   buildSavedImageKey,
-  generatePresignedUrl,
+  buildCdnUrl,
 } from '../services/storage/s3';
 import {
   getImage,
   getImagesByRequest,
+  getRequest,
   updateImageStatus,
   updateImageS3Key,
   createRequest,
 } from '../services/storage/dynamo';
 import {
   respondToWebhook,
-  buildKeptImageMessage,
-  buildAllKeptMessage,
-  buildAllDiscardedMessage,
   buildRegeneratingMessage,
+  buildUpdatedImagesMessage,
+  type ImageWithStatus,
 } from '../services/slack';
 import { ActionJobMessageSchema } from '../types/domain.types';
 import type { GenerationRequest, GenerationJobMessage } from '../types/domain.types';
@@ -72,12 +72,11 @@ const processActionJob = async (messageBody: string): Promise<void> => {
 
   // Get configuration
   const imagesBucket = process.env.IMAGES_BUCKET;
+  const imagesCdnDomain = process.env.IMAGES_CDN_DOMAIN;
   const requestsTable = process.env.REQUESTS_TABLE;
   const imagesTable = process.env.IMAGES_TABLE;
-  const presignedUrlExpiry = parseInt(process.env.PRESIGNED_URL_EXPIRY ?? '604800', 10);
-  const expiryDays = Math.floor(presignedUrlExpiry / 86400);
 
-  if (!imagesBucket || !requestsTable || !imagesTable) {
+  if (!imagesBucket || !imagesCdnDomain || !requestsTable || !imagesTable) {
     throw new Error('Missing required environment variables');
   }
 
@@ -88,9 +87,9 @@ const processActionJob = async (messageBody: string): Promise<void> => {
         requestId,
         userId,
         imagesBucket,
+        imagesCdnDomain,
+        requestsTable,
         imagesTable,
-        presignedUrlExpiry,
-        expiryDays,
         responseUrl,
       });
       break;
@@ -99,6 +98,8 @@ const processActionJob = async (messageBody: string): Promise<void> => {
       await handleDiscardImage({
         imageId: imageId!,
         requestId,
+        imagesCdnDomain,
+        requestsTable,
         imagesTable,
         responseUrl,
       });
@@ -109,9 +110,9 @@ const processActionJob = async (messageBody: string): Promise<void> => {
         requestId,
         userId,
         imagesBucket,
+        imagesCdnDomain,
+        requestsTable,
         imagesTable,
-        presignedUrlExpiry,
-        expiryDays,
         responseUrl,
       });
       break;
@@ -119,6 +120,7 @@ const processActionJob = async (messageBody: string): Promise<void> => {
     case 'discard_all':
       await handleDiscardAll({
         requestId,
+        requestsTable,
         imagesTable,
         responseUrl,
       });
@@ -145,9 +147,9 @@ interface KeepImageParams {
   readonly requestId: string;
   readonly userId: string;
   readonly imagesBucket: string;
+  readonly imagesCdnDomain: string;
+  readonly requestsTable: string;
   readonly imagesTable: string;
-  readonly presignedUrlExpiry: number;
-  readonly expiryDays: number;
   readonly responseUrl: string;
 }
 
@@ -156,9 +158,9 @@ const handleKeepImage = async ({
   requestId,
   userId,
   imagesBucket,
+  imagesCdnDomain,
+  requestsTable,
   imagesTable,
-  presignedUrlExpiry,
-  expiryDays,
   responseUrl,
 }: KeepImageParams): Promise<void> => {
   logger.info('Keeping image', { imageId, requestId });
@@ -184,16 +186,8 @@ const handleKeepImage = async ({
     destinationKey,
   });
 
-  // Generate presigned URL
-  const presignedUrl = await generatePresignedUrl({
-    bucket: imagesBucket,
-    key: destinationKey,
-    expiresIn: presignedUrlExpiry,
-  });
-
-  const presignedUrlExpiry_date = new Date(
-    Date.now() + presignedUrlExpiry * 1000
-  ).toISOString();
+  // Build permanent CDN URL for the saved image
+  const cdnUrl = buildCdnUrl(imagesCdnDomain, destinationKey);
 
   // Update image record
   await updateImageS3Key({
@@ -208,22 +202,48 @@ const handleKeepImage = async ({
     imageId,
     requestId,
     status: 'kept',
-    presignedUrl,
-    presignedUrlExpiry: presignedUrlExpiry_date,
   });
 
-  // Respond to Slack
+  // Get request for the original prompt
+  const request = await getRequest({
+    tableName: requestsTable,
+    requestId,
+  });
+
+  // Get all images to rebuild the message
+  const allImages = await getImagesByRequest({
+    tableName: imagesTable,
+    requestId,
+  });
+
+  // Build updated message with current statuses
+  const imagesWithStatus: ImageWithStatus[] = allImages.map(img => ({
+    imageId: img.imageId,
+    imageUrl: buildCdnUrl(imagesCdnDomain, img.s3Key),
+    status: img.status,
+    downloadUrl: img.imageId === imageId ? cdnUrl : undefined,
+  }));
+
+  const updatedBlocks = buildUpdatedImagesMessage(
+    request?.prompt ?? 'Unknown prompt',
+    imagesWithStatus,
+    requestId
+  );
+
+  // Update the original message in the channel
   await respondToWebhook(responseUrl, {
-    response_type: 'ephemeral',
-    blocks: buildKeptImageMessage(presignedUrl, expiryDays),
+    replace_original: true,
+    blocks: updatedBlocks,
   });
 
-  logger.info('Image kept', { imageId, destinationKey });
+  logger.info('Image kept', { imageId, destinationKey, cdnUrl });
 };
 
 interface DiscardImageParams {
   readonly imageId: string;
   readonly requestId: string;
+  readonly imagesCdnDomain: string;
+  readonly requestsTable: string;
   readonly imagesTable: string;
   readonly responseUrl: string;
 }
@@ -231,6 +251,8 @@ interface DiscardImageParams {
 const handleDiscardImage = async ({
   imageId,
   requestId,
+  imagesCdnDomain,
+  requestsTable,
   imagesTable,
   responseUrl,
 }: DiscardImageParams): Promise<void> => {
@@ -244,10 +266,35 @@ const handleDiscardImage = async ({
     status: 'discarded',
   });
 
-  // Respond to Slack
+  // Get request for the original prompt
+  const request = await getRequest({
+    tableName: requestsTable,
+    requestId,
+  });
+
+  // Get all images to rebuild the message
+  const allImages = await getImagesByRequest({
+    tableName: imagesTable,
+    requestId,
+  });
+
+  // Build updated message with current statuses (discarded images will be hidden)
+  const imagesWithStatus: ImageWithStatus[] = allImages.map(img => ({
+    imageId: img.imageId,
+    imageUrl: buildCdnUrl(imagesCdnDomain, img.s3Key),
+    status: img.status,
+  }));
+
+  const updatedBlocks = buildUpdatedImagesMessage(
+    request?.prompt ?? 'Unknown prompt',
+    imagesWithStatus,
+    requestId
+  );
+
+  // Update the original message in the channel
   await respondToWebhook(responseUrl, {
-    response_type: 'ephemeral',
-    text: 'Image discarded.',
+    replace_original: true,
+    blocks: updatedBlocks,
   });
 
   logger.info('Image discarded', { imageId });
@@ -257,9 +304,9 @@ interface KeepAllParams {
   readonly requestId: string;
   readonly userId: string;
   readonly imagesBucket: string;
+  readonly imagesCdnDomain: string;
+  readonly requestsTable: string;
   readonly imagesTable: string;
-  readonly presignedUrlExpiry: number;
-  readonly expiryDays: number;
   readonly responseUrl: string;
 }
 
@@ -267,9 +314,9 @@ const handleKeepAll = async ({
   requestId,
   userId,
   imagesBucket,
+  imagesCdnDomain,
+  requestsTable,
   imagesTable,
-  presignedUrlExpiry,
-  expiryDays,
   responseUrl,
 }: KeepAllParams): Promise<void> => {
   logger.info('Keeping all images', { requestId });
@@ -284,8 +331,8 @@ const handleKeepAll = async ({
     throw new Error(`No images found for request: ${requestId}`);
   }
 
-  // Process each image
-  const presignedUrls: Array<{ index: number; url: string }> = [];
+  // Process each image - collect CDN URLs
+  const cdnUrls: Array<{ index: number; url: string }> = [];
 
   const keepPromises = images.map(async (image, index) => {
     // Skip already kept or discarded images
@@ -303,16 +350,8 @@ const handleKeepAll = async ({
       destinationKey,
     });
 
-    // Generate presigned URL
-    const presignedUrl = await generatePresignedUrl({
-      bucket: imagesBucket,
-      key: destinationKey,
-      expiresIn: presignedUrlExpiry,
-    });
-
-    const presignedUrlExpiry_date = new Date(
-      Date.now() + presignedUrlExpiry * 1000
-    ).toISOString();
+    // Build permanent CDN URL
+    const cdnUrl = buildCdnUrl(imagesCdnDomain, destinationKey);
 
     // Update image record
     await updateImageS3Key({
@@ -327,35 +366,61 @@ const handleKeepAll = async ({
       imageId: image.imageId,
       requestId,
       status: 'kept',
-      presignedUrl,
-      presignedUrlExpiry: presignedUrlExpiry_date,
     });
 
-    presignedUrls.push({ index, url: presignedUrl });
+    cdnUrls.push({ index, url: cdnUrl });
   });
 
   await Promise.all(keepPromises);
 
   // Sort by index
-  presignedUrls.sort((a, b) => a.index - b.index);
+  cdnUrls.sort((a, b) => a.index - b.index);
 
-  // Respond to Slack
-  await respondToWebhook(responseUrl, {
-    response_type: 'ephemeral',
-    blocks: buildAllKeptMessage(presignedUrls, expiryDays),
+  // Get request for the original prompt
+  const request = await getRequest({
+    tableName: requestsTable,
+    requestId,
   });
 
-  logger.info('All images kept', { requestId, count: presignedUrls.length });
+  // Get updated images to rebuild the message
+  const allImages = await getImagesByRequest({
+    tableName: imagesTable,
+    requestId,
+  });
+
+  // Build updated message showing all images as kept
+  const imagesWithStatus: ImageWithStatus[] = allImages.map((img, index) => ({
+    imageId: img.imageId,
+    imageUrl: buildCdnUrl(imagesCdnDomain, img.s3Key),
+    status: img.status,
+    downloadUrl: cdnUrls.find(u => u.index === index)?.url,
+  }));
+
+  const updatedBlocks = buildUpdatedImagesMessage(
+    request?.prompt ?? 'Unknown prompt',
+    imagesWithStatus,
+    requestId
+  );
+
+  // Update the original message
+  await respondToWebhook(responseUrl, {
+    replace_original: true,
+    blocks: updatedBlocks,
+  });
+
+  logger.info('All images kept', { requestId, count: cdnUrls.length });
 };
 
 interface DiscardAllParams {
   readonly requestId: string;
+  readonly requestsTable: string;
   readonly imagesTable: string;
   readonly responseUrl: string;
 }
 
 const handleDiscardAll = async ({
   requestId,
+  requestsTable,
   imagesTable,
   responseUrl,
 }: DiscardAllParams): Promise<void> => {
@@ -384,10 +449,23 @@ const handleDiscardAll = async ({
 
   await Promise.all(discardPromises);
 
-  // Respond to Slack
+  // Get request for the original prompt
+  const request = await getRequest({
+    tableName: requestsTable,
+    requestId,
+  });
+
+  // Build updated message showing all images discarded
+  const updatedBlocks = buildUpdatedImagesMessage(
+    request?.prompt ?? 'Unknown prompt',
+    [], // All discarded, no visible images
+    requestId
+  );
+
+  // Update the original message
   await respondToWebhook(responseUrl, {
-    response_type: 'ephemeral',
-    blocks: buildAllDiscardedMessage(),
+    replace_original: true,
+    blocks: updatedBlocks,
   });
 
   logger.info('All images discarded', { requestId });
@@ -457,9 +535,9 @@ const handleRegenerateAll = async ({
 
   await getSQSClient().send(sqsCommand);
 
-  // Respond to Slack
+  // Update the original message to show regenerating status
   await respondToWebhook(responseUrl, {
-    response_type: 'ephemeral',
+    replace_original: true,
     blocks: buildRegeneratingMessage(originalPrompt),
   });
 

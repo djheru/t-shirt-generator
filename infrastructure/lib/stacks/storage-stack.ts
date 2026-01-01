@@ -2,6 +2,8 @@ import * as cdk from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import type { Construct } from 'constructs';
 
 export interface SlackSecrets {
@@ -15,6 +17,7 @@ export interface ProviderSecrets {
 
 export class StorageStack extends cdk.Stack {
   public readonly imagesBucket: s3.Bucket;
+  public readonly imagesCdn: cloudfront.Distribution;
   public readonly requestsTable: dynamodb.Table;
   public readonly imagesTable: dynamodb.Table;
   public readonly slackSecrets: SlackSecrets;
@@ -51,6 +54,20 @@ export class StorageStack extends cdk.Stack {
           maxAge: 3000,
         },
       ],
+    });
+
+    // CloudFront CDN for serving images with permanent URLs
+    this.imagesCdn = new cloudfront.Distribution(this, 'ImagesCdn', {
+      comment: 'T-Shirt Generator Images CDN',
+      defaultBehavior: {
+        origin: origins.S3BucketOrigin.withOriginAccessControl(this.imagesBucket),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+      },
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_100, // US, Canada, Europe
+      httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
     });
 
     // DynamoDB Table for Generation Requests
@@ -182,6 +199,12 @@ export class StorageStack extends cdk.Stack {
       value: geminiApiKey.secretArn,
       description: 'ARN of the Gemini API key (only needed if using Gemini provider)',
       exportName: 'TShirtGeneratorGeminiApiKeyArn',
+    });
+
+    new cdk.CfnOutput(this, 'ImagesCdnDomain', {
+      value: this.imagesCdn.distributionDomainName,
+      description: 'CloudFront domain for serving images',
+      exportName: 'TShirtGeneratorImagesCdnDomain',
     });
   }
 }

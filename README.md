@@ -31,12 +31,27 @@ This application provides a streamlined workflow for generating t-shirt graphics
 
 - **Multiple AI providers** - Switch between Bedrock and Gemini via environment variable
 - **Bedrock models**: Amazon Titan Image Generator v2, Stability AI SDXL
-- **Gemini models**: Imagen 3, Gemini 2.0 Flash (experimental)
+- **Gemini models**: Gemini 3 Pro (gemini-3-pro-image-preview), Gemini 2.5 Flash
 - Automatic **prompt enhancement** for t-shirt-optimized outputs
 - **Transparency detection** - automatically optimizes prompts mentioning "transparent background"
 - **Channel restriction** - only works in a designated Slack channel
 - **Async processing** - handles Slack's 3-second timeout requirement
 - **Presigned URLs** for secure image downloads (7-day expiry)
+- **AWS Lambda Powertools** - Structured logging and secrets management with caching
+
+### Technology Stack
+
+| Category | Technology |
+|----------|------------|
+| **Runtime** | Node.js 22, TypeScript 5 |
+| **Infrastructure** | AWS CDK v2 |
+| **Compute** | AWS Lambda (ARM64) |
+| **Storage** | S3, DynamoDB |
+| **Messaging** | SQS |
+| **API** | API Gateway |
+| **AI Providers** | Amazon Bedrock, Google Gemini |
+| **Observability** | [AWS Lambda Powertools](https://docs.powertools.aws.dev/lambda/typescript/) (Logger, Parameters) |
+| **Validation** | Zod |
 
 ## Architecture
 
@@ -99,7 +114,7 @@ This application provides a streamlined workflow for generating t-shirt graphics
 | **SQS Queues** | Decouple request handling from processing (async pattern) |
 | **DynamoDB** | Stores generation requests and image metadata |
 | **S3** | Stores generated images (temp and saved) |
-| **Secrets Manager** | Securely stores Slack credentials |
+| **Secrets Manager** | Securely stores Slack and provider credentials (accessed via Powertools Parameters) |
 
 ### Data Flow
 
@@ -182,7 +197,7 @@ t-shirt-generator/
 │   │   └── storage/               # Data persistence
 │   │       ├── s3.ts              # S3 operations
 │   │       ├── dynamo.ts          # DynamoDB operations
-│   │       └── secrets.ts         # Secrets Manager
+│   │       └── secrets.ts         # Secrets Manager (via Powertools Parameters)
 │   ├── types/                     # TypeScript type definitions
 │   │   ├── domain.types.ts        # Domain models
 │   │   └── slack.types.ts         # Slack API types
@@ -367,8 +382,8 @@ The system automatically adds transparency-optimized prompt enhancements.
 | `ALLOWED_CHANNEL_ID` | Slack channel ID (required) | - |
 | `IMAGE_PROVIDER` | `bedrock` or `gemini` | `bedrock` |
 | `BEDROCK_MODEL` | `titan` or `sdxl` (when using Bedrock) | `titan` |
-| `GEMINI_MODEL` | `imagen-3` (when using Gemini) | `imagen-3` |
-| `USE_GEMINI_FLASH` | Use Gemini 2.0 Flash instead of Imagen 3 | `false` |
+| `GEMINI_MODEL` | `gemini-3-pro` or `gemini-2.5-flash` | `gemini-3-pro` |
+| `USE_GEMINI_FLASH` | Use Gemini 2.5 Flash instead of 3 Pro | `false` |
 | `PROMPT_SUFFIX` | Text appended to all prompts | `, high quality, professional graphic design...` |
 | `NEGATIVE_PROMPT` | Default negative prompt | `blurry, low quality, distorted...` |
 | `PRESIGNED_URL_EXPIRY` | URL expiry in seconds | `604800` (7 days) |
@@ -399,9 +414,9 @@ aws lambda update-function-configuration \
   --environment "Variables={BEDROCK_MODEL=sdxl,...}"
 ```
 
-### Using Gemini Flash (Experimental)
+### Using Gemini 2.5 Flash
 
-Gemini 2.0 Flash has native image generation capabilities. To use it instead of Imagen 3:
+Gemini 2.5 Flash is faster and cheaper than Gemini 3 Pro. To use it:
 
 ```bash
 aws lambda update-function-configuration \
@@ -409,14 +424,16 @@ aws lambda update-function-configuration \
   --environment "Variables={IMAGE_PROVIDER=gemini,USE_GEMINI_FLASH=true,...}"
 ```
 
+Or set `GEMINI_MODEL=gemini-2.5-flash` directly.
+
 **Provider & Model Comparison:**
 
 | Provider | Model | Cost/Image | Quality | Speed | Notes |
 |----------|-------|------------|---------|-------|-------|
 | Bedrock | Titan Image Generator v2 | ~$0.008 | Good | Fast | Best value |
 | Bedrock | Stability SDXL 1.0 | ~$0.04 | Higher | Slower | Premium quality |
-| Gemini | Imagen 3 | ~$0.02 | High | Medium | Good balance |
-| Gemini | Gemini 2.0 Flash | ~$0.001 | Variable | Fast | Experimental |
+| Gemini | Gemini 3 Pro | ~$0.02 | High | Medium | Default, high quality |
+| Gemini | Gemini 2.5 Flash | ~$0.005 | Good | Fast | Cost-effective |
 
 ### Customizing Prompt Enhancements
 
@@ -429,6 +446,26 @@ PROMPT_SUFFIX=", vector art style, bold colors, print ready"
 # Custom negative prompt
 NEGATIVE_PROMPT="blurry, pixelated, low resolution, watermark"
 ```
+
+### Secrets Management
+
+Secrets are retrieved using [AWS Lambda Powertools Parameters](https://docs.aws.amazon.com/powertools/typescript/latest/utilities/parameters/) utility, which provides:
+
+- **Built-in caching** - Secrets are cached for 5 minutes to reduce API calls
+- **Automatic retries** - Handles transient failures gracefully
+- **JSON transformation** - Automatically parses JSON-formatted secrets
+
+```typescript
+// Example: How secrets are retrieved internally
+import { getSecret } from '@aws-lambda-powertools/parameters/secrets';
+
+const secret = await getSecret(secretArn, {
+  maxAge: 300,        // Cache for 5 minutes
+  transform: 'json',  // Auto-parse JSON
+});
+```
+
+Secrets are stored in AWS Secrets Manager with the format `{"value": "your-secret-here"}`.
 
 ## Development
 
@@ -590,13 +627,13 @@ aws sqs get-queue-attributes \
 
 ### Per Generation Request (3 images)
 
-| Service | Bedrock Titan | Bedrock SDXL | Gemini Imagen 3 | Gemini Flash |
-|---------|---------------|--------------|-----------------|--------------|
-| AI Generation | $0.024 | $0.12 | ~$0.06 | ~$0.003 |
+| Service | Bedrock Titan | Bedrock SDXL | Gemini 3 Pro | Gemini 2.5 Flash |
+|---------|---------------|--------------|--------------|------------------|
+| AI Generation | $0.024 | $0.12 | ~$0.06 | ~$0.015 |
 | Lambda | ~$0.002 | ~$0.002 | ~$0.002 | ~$0.002 |
 | S3 | ~$0.001 | ~$0.001 | ~$0.001 | ~$0.001 |
 | DynamoDB | ~$0.001 | ~$0.001 | ~$0.001 | ~$0.001 |
-| **Total** | **~$0.03** | **~$0.13** | **~$0.07** | **~$0.01** |
+| **Total** | **~$0.03** | **~$0.13** | **~$0.07** | **~$0.02** |
 
 ### Monthly Estimate (Bedrock)
 
@@ -608,11 +645,11 @@ aws sqs get-queue-attributes \
 
 ### Monthly Estimate (Gemini)
 
-| Usage | Imagen 3 | Gemini Flash |
-|-------|----------|--------------|
+| Usage | Gemini 3 Pro | Gemini 2.5 Flash |
+|-------|--------------|------------------|
 | 50 requests/month | ~$8 | ~$5 |
-| 100 requests/month | ~$12 | ~$6 |
-| 500 requests/month | ~$40 | ~$10 |
+| 100 requests/month | ~$12 | ~$7 |
+| 500 requests/month | ~$40 | ~$15 |
 
 *Includes base infrastructure costs (~$5-10/month for API Gateway, Lambda, S3, DynamoDB)*
 

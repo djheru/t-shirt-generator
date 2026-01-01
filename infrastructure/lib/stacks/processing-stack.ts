@@ -12,6 +12,7 @@ import * as path from 'node:path';
 
 export interface ProcessingStackProps extends cdk.StackProps {
   readonly imagesBucket: s3.IBucket;
+  readonly imagesCdnDomain: string;
   readonly requestsTable: dynamodb.ITable;
   readonly imagesTable: dynamodb.ITable;
   readonly slackSecrets: SlackSecrets;
@@ -29,7 +30,13 @@ export class ProcessingStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ProcessingStackProps) {
     super(scope, id, props);
 
-    const { imagesBucket, requestsTable, imagesTable, slackSecrets, providerSecrets } = props;
+    const { imagesBucket, imagesCdnDomain, requestsTable, imagesTable, slackSecrets, providerSecrets } = props;
+
+    // Read image provider configuration from CDK context
+    const imageProvider = this.node.tryGetContext('imageProvider') ?? 'bedrock';
+    const bedrockModel = this.node.tryGetContext('bedrockModel') ?? 'titan';
+    const geminiModel = this.node.tryGetContext('geminiModel') ?? 'gemini-3-pro';
+    const useGeminiFlash = this.node.tryGetContext('useGeminiFlash') === 'true';
 
     // Dead Letter Queues
     const generationDlq = new sqs.Queue(this, 'GenerationDLQ', {
@@ -66,17 +73,17 @@ export class ProcessingStack extends cdk.Stack {
     // Common Lambda configuration
     const lambdaEnvironment = {
       IMAGES_BUCKET: imagesBucket.bucketName,
+      IMAGES_CDN_DOMAIN: imagesCdnDomain,
       REQUESTS_TABLE: requestsTable.tableName,
       IMAGES_TABLE: imagesTable.tableName,
       GENERATION_QUEUE_URL: this.generationQueue.queueUrl,
       ACTION_QUEUE_URL: this.actionQueue.queueUrl,
-      // Image provider configuration - defaults to Bedrock
-      IMAGE_PROVIDER: 'bedrock', // Can be 'bedrock' or 'gemini'
-      BEDROCK_MODEL: 'titan',
-      GEMINI_MODEL: 'imagen-3',
-      USE_GEMINI_FLASH: 'false',
+      // Image provider configuration (configurable via CDK context)
+      IMAGE_PROVIDER: imageProvider,
+      BEDROCK_MODEL: bedrockModel,
+      GEMINI_MODEL: geminiModel,
+      USE_GEMINI_FLASH: useGeminiFlash ? 'true' : 'false',
       ALLOWED_CHANNEL_ID: '', // Must be set after deployment
-      PRESIGNED_URL_EXPIRY: '604800',
       NODE_OPTIONS: '--enable-source-maps',
       POWERTOOLS_SERVICE_NAME: 't-shirt-generator',
       POWERTOOLS_LOG_LEVEL: 'INFO',

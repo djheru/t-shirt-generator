@@ -292,3 +292,179 @@ export const updateImageStatus = (
     return block;
   });
 };
+
+export interface ImageWithStatus {
+  readonly imageId: string;
+  readonly imageUrl: string;
+  readonly status: 'generated' | 'kept' | 'discarded';
+  readonly downloadUrl?: string;
+}
+
+/**
+ * Build an updated message showing current status of all images.
+ * Images with 'generated' status show with action buttons.
+ * Images with 'kept' status show with download link.
+ * Images with 'discarded' status are not shown.
+ */
+export const buildUpdatedImagesMessage = (
+  prompt: string,
+  images: ImageWithStatus[],
+  requestId: string
+): SlackBlock[] => {
+  const blocks: SlackBlock[] = [];
+
+  // Header section
+  const headerBlock: SlackSectionBlock = {
+    type: 'section',
+    text: {
+      type: 'mrkdwn',
+      text: `*Generated Images*\n*Prompt:* ${prompt}`,
+    },
+  };
+  blocks.push(headerBlock);
+
+  // Filter out discarded images
+  const visibleImages = images.filter(img => img.status !== 'discarded');
+  const activeImages = images.filter(img => img.status === 'generated');
+
+  if (visibleImages.length === 0) {
+    // All images were discarded
+    const emptyBlock: SlackSectionBlock = {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: '_All images have been discarded._',
+      },
+    };
+    blocks.push(emptyBlock);
+    return blocks;
+  }
+
+  // Add each visible image
+  for (let i = 0; i < visibleImages.length; i++) {
+    const image = visibleImages[i];
+
+    // Image block
+    const imageBlock: SlackImageBlock = {
+      type: 'image',
+      block_id: `image_${image.imageId}`,
+      image_url: image.imageUrl,
+      alt_text: `Generated image ${i + 1}`,
+      title: {
+        type: 'plain_text',
+        text: `Image ${i + 1}`,
+      },
+    };
+    blocks.push(imageBlock);
+
+    if (image.status === 'generated') {
+      // Action buttons for active images
+      const actionValue = `${image.imageId}|${requestId}`;
+      const actionsBlock: SlackActionsBlock = {
+        type: 'actions',
+        block_id: `actions_${image.imageId}`,
+        elements: [
+          {
+            type: 'button',
+            text: {
+              type: 'plain_text',
+              text: 'Keep',
+              emoji: true,
+            },
+            style: 'primary',
+            action_id: 'keep_image',
+            value: actionValue,
+          },
+          {
+            type: 'button',
+            text: {
+              type: 'plain_text',
+              text: 'Discard',
+              emoji: true,
+            },
+            style: 'danger',
+            action_id: 'discard_image',
+            value: actionValue,
+          },
+        ],
+      };
+      blocks.push(actionsBlock);
+    } else if (image.status === 'kept') {
+      // Status indicator for kept images
+      const statusBlock: SlackSectionBlock = {
+        type: 'section',
+        block_id: `status_${image.imageId}`,
+        text: {
+          type: 'mrkdwn',
+          text: image.downloadUrl
+            ? `✓ *Kept* - <${image.downloadUrl}|Download Image>`
+            : '✓ *Kept*',
+        },
+      };
+      blocks.push(statusBlock);
+    }
+  }
+
+  // Only show batch actions if there are still active images
+  if (activeImages.length > 0) {
+    // Divider before batch actions
+    const divider: SlackDividerBlock = {
+      type: 'divider',
+    };
+    blocks.push(divider);
+
+    // Batch action buttons
+    const batchActionsBlock: SlackActionsBlock = {
+      type: 'actions',
+      block_id: 'batch_actions',
+      elements: [
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: 'Keep All',
+            emoji: true,
+          },
+          style: 'primary',
+          action_id: 'keep_all',
+          value: requestId,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: 'Discard All',
+            emoji: true,
+          },
+          action_id: 'discard_all',
+          value: requestId,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: 'Regenerate All',
+            emoji: true,
+          },
+          action_id: 'regenerate_all',
+          value: requestId,
+        },
+      ],
+    };
+    blocks.push(batchActionsBlock);
+  }
+
+  // Context with request ID for reference
+  const contextBlock: SlackContextBlock = {
+    type: 'context',
+    elements: [
+      {
+        type: 'mrkdwn',
+        text: `Request ID: \`${requestId}\``,
+      },
+    ],
+  };
+  blocks.push(contextBlock);
+
+  return blocks;
+};

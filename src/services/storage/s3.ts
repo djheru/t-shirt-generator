@@ -167,3 +167,10 @@ export const buildSavedImageKey = (
 
 export const buildThumbnailKey = (requestId: string, imageId: string): string =>
   `thumbnails/${requestId}/${imageId}.png`;
+
+/**
+ * Build a public CloudFront URL for an image.
+ * Unlike presigned URLs, these don't expire.
+ */
+export const buildCdnUrl = (cdnDomain: string, key: string): string =>
+  `https://${cdnDomain}/${key}`;

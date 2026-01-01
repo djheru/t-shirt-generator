@@ -21,6 +21,7 @@ const processingStack = new ProcessingStack(app, 'TShirtGeneratorProcessing', {
   env,
   description: 'T-Shirt Generator - Processing resources (SQS, Lambda)',
   imagesBucket: storageStack.imagesBucket,
+  imagesCdnDomain: storageStack.imagesCdn.distributionDomainName,
   requestsTable: storageStack.requestsTable,
   imagesTable: storageStack.imagesTable,
   slackSecrets: storageStack.slackSecrets,

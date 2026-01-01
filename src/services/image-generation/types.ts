@@ -7,7 +7,7 @@
 
 export type ImageProvider = 'bedrock' | 'gemini';
 export type BedrockModel = 'titan' | 'sdxl';
-export type GeminiModel = 'imagen-3';
+export type GeminiModel = 'gemini-2.5-flash' | 'gemini-3-pro';
 
 export interface GenerateImagesParams {
   readonly prompt: string;

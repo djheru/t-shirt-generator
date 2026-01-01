@@ -51,22 +51,33 @@ describe('Image Generation Factory', () => {
       expect(generator.getModel()).toBe('amazon.titan-image-generator-v2:0');
     });
 
-    it('should create a Gemini provider', () => {
+    it('should create a Gemini provider with gemini-3-pro', () => {
       const generator = createImageGenerator({
         provider: 'gemini',
         geminiApiKey: 'test-api-key',
-        geminiModel: 'imagen-3',
+        geminiModel: 'gemini-3-pro',
       });
 
       expect(generator.getProvider()).toBe('gemini');
-      expect(generator.getModel()).toBe('imagen-3.0-generate-002');
+      expect(generator.getModel()).toBe('gemini-3-pro-image-preview');
+    });
+
+    it('should create a Gemini provider with gemini-2.5-flash', () => {
+      const generator = createImageGenerator({
+        provider: 'gemini',
+        geminiApiKey: 'test-api-key',
+        geminiModel: 'gemini-2.5-flash',
+      });
+
+      expect(generator.getProvider()).toBe('gemini');
+      expect(generator.getModel()).toBe('gemini-2.5-flash-preview-05-20');
     });
 
     it('should throw error when Gemini API key is missing', () => {
       expect(() =>
         createImageGenerator({
           provider: 'gemini',
-          geminiModel: 'imagen-3',
+          geminiModel: 'gemini-3-pro',
         })
       ).toThrow('Gemini API key is required for Gemini provider');
     });
@@ -79,7 +90,7 @@ describe('Image Generation Factory', () => {
       });
 
       expect(generator.getProvider()).toBe('gemini');
-      expect(generator.getModel()).toBe('gemini-2.0-flash-exp');
+      expect(generator.getModel()).toBe('gemini-2.5-flash-preview-05-20');
     });
   });
 
@@ -151,7 +162,7 @@ describe('Image Generation Factory', () => {
       const generator = await createImageGeneratorFromEnv(mockGetSecret);
 
       expect(generator.getProvider()).toBe('gemini');
-      expect(generator.getModel()).toBe('gemini-2.0-flash-exp');
+      expect(generator.getModel()).toBe('gemini-2.5-flash-preview-05-20');
     });
   });
 });

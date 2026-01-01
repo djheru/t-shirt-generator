@@ -11,7 +11,7 @@ import {
 import {
   uploadImage,
   buildTempImageKey,
-  generatePresignedUrl,
+  buildCdnUrl,
 } from '../services/storage/s3';
 import {
   updateRequestStatus,
@@ -69,11 +69,12 @@ const processGenerationJob = async (messageBody: string): Promise<void> => {
 
   // Get configuration
   const imagesBucket = process.env.IMAGES_BUCKET;
+  const imagesCdnDomain = process.env.IMAGES_CDN_DOMAIN;
   const requestsTable = process.env.REQUESTS_TABLE;
   const imagesTable = process.env.IMAGES_TABLE;
   const botTokenArn = process.env.SLACK_BOT_TOKEN_ARN;
 
-  if (!imagesBucket || !requestsTable || !imagesTable || !botTokenArn) {
+  if (!imagesBucket || !imagesCdnDomain || !requestsTable || !imagesTable || !botTokenArn) {
     throw new Error('Missing required environment variables');
   }
 
@@ -163,16 +164,12 @@ const processGenerationJob = async (messageBody: string): Promise<void> => {
         image: imageRecord,
       });
 
-      // Generate presigned URL for display in Slack
-      const presignedUrl = await generatePresignedUrl({
-        bucket: imagesBucket,
-        key: s3Key,
-        expiresIn: 3600, // 1 hour for display
-      });
+      // Build CDN URL for display in Slack (permanent, doesn't expire)
+      const imageUrl = buildCdnUrl(imagesCdnDomain, s3Key);
 
       return {
         imageId,
-        imageUrl: presignedUrl,
+        imageUrl,
         index,
       };
     });

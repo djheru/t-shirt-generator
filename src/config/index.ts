@@ -60,10 +60,10 @@ const parseBedrockModel = (value: string): BedrockModel => {
 };
 
 const parseGeminiModel = (value: string): GeminiModel => {
-  if (value === 'imagen-3') {
+  if (value === 'gemini-2.5-flash' || value === 'gemini-3-pro') {
     return value;
   }
-  throw new Error(`Invalid GEMINI_MODEL value: ${value}. Must be 'imagen-3'`);
+  throw new Error(`Invalid GEMINI_MODEL value: ${value}. Must be 'gemini-2.5-flash' or 'gemini-3-pro'`);
 };
 
 export const getConfig = (): Config => ({
@@ -75,7 +75,7 @@ export const getConfig = (): Config => ({
   imageGeneration: {
     provider: parseImageProvider(getEnvOrDefault('IMAGE_PROVIDER', 'bedrock')),
     bedrockModel: parseBedrockModel(getEnvOrDefault('BEDROCK_MODEL', 'titan')),
-    geminiModel: parseGeminiModel(getEnvOrDefault('GEMINI_MODEL', 'imagen-3')),
+    geminiModel: parseGeminiModel(getEnvOrDefault('GEMINI_MODEL', 'gemini-3-pro')),
     geminiApiKeyArn: process.env.GEMINI_API_KEY_ARN,
     useGeminiFlash: getEnvOrDefault('USE_GEMINI_FLASH', 'false') === 'true',
     imageCount: 3,

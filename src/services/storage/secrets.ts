@@ -1,63 +1,46 @@
-import {
-  SecretsManagerClient,
-  GetSecretValueCommand,
-} from '@aws-sdk/client-secrets-manager';
+import { getSecret } from '@aws-lambda-powertools/parameters/secrets';
 import { Logger } from '@aws-lambda-powertools/logger';
 
 const logger = new Logger({ serviceName: 't-shirt-generator' });
 
-let secretsClient: SecretsManagerClient | null = null;
+// Cache TTL in seconds (Powertools default is 5 seconds, we use 5 minutes)
+const CACHE_MAX_AGE_SECONDS = 300;
 
-// Cache for secrets to avoid repeated API calls
-const secretsCache = new Map<string, { value: string; expiry: number }>();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-export const getSecretsClient = (): SecretsManagerClient => {
-  if (!secretsClient) {
-    secretsClient = new SecretsManagerClient({});
-  }
-  return secretsClient;
-};
-
-export const resetSecretsClient = (): void => {
-  secretsClient = null;
-  secretsCache.clear();
-};
-
+/**
+ * Retrieve a secret value from AWS Secrets Manager.
+ *
+ * Uses AWS Lambda Powertools Parameters utility which provides:
+ * - Built-in caching (configurable TTL)
+ * - Automatic retries
+ * - JSON transformation support
+ *
+ * @see https://docs.aws.amazon.com/powertools/typescript/latest/utilities/parameters/
+ */
 export const getSecretValue = async (secretArn: string): Promise<string> => {
-  // Check cache first
-  const cached = secretsCache.get(secretArn);
-  if (cached && cached.expiry > Date.now()) {
-    logger.debug('Returning cached secret', { secretArn });
-    return cached.value;
-  }
-
-  const client = getSecretsClient();
-
   logger.debug('Fetching secret from Secrets Manager', { secretArn });
 
-  const command = new GetSecretValueCommand({
-    SecretId: secretArn,
-  });
-
-  const response = await client.send(command);
-
-  if (!response.SecretString) {
-    throw new Error(`Secret ${secretArn} has no string value`);
-  }
-
-  // Parse the secret - it might be JSON or plain text
-  let secretValue: string;
   try {
-    const parsed = JSON.parse(response.SecretString) as Record<string, unknown>;
-    // If it's the placeholder format, return the generated value
-    if ('value' in parsed && typeof parsed.value === 'string') {
-      secretValue = parsed.value;
-    } else if ('secret' in parsed && typeof parsed.secret === 'string') {
-      secretValue = parsed.secret;
+    // Powertools getSecret with JSON transform and caching
+    const secret = await getSecret<Record<string, string>>(secretArn, {
+      maxAge: CACHE_MAX_AGE_SECONDS,
+      transform: 'json',
+    });
+
+    if (!secret) {
+      throw new Error(`Secret ${secretArn} returned null`);
+    }
+
+    // Extract the value from common secret formats
+    let secretValue: string;
+    if (typeof secret === 'string') {
+      secretValue = secret;
+    } else if ('value' in secret && typeof secret.value === 'string') {
+      secretValue = secret.value;
+    } else if ('secret' in secret && typeof secret.secret === 'string') {
+      secretValue = secret.secret;
     } else {
       // Return the first string value found
-      const firstValue = Object.values(parsed).find(
+      const firstValue = Object.values(secret).find(
         (v): v is string => typeof v === 'string'
       );
       if (!firstValue) {
@@ -65,20 +48,23 @@ export const getSecretValue = async (secretArn: string): Promise<string> => {
       }
       secretValue = firstValue;
     }
-  } catch {
-    // Not JSON, use as-is
-    secretValue = response.SecretString;
+
+    logger.debug('Secret retrieved successfully', { secretArn });
+    return secretValue;
+  } catch (error) {
+    // If JSON transform fails, try fetching as plain string
+    if ((error as Error).message?.includes('transform')) {
+      logger.debug('JSON transform failed, fetching as plain string', { secretArn });
+      const plainSecret = await getSecret(secretArn, {
+        maxAge: CACHE_MAX_AGE_SECONDS,
+      });
+      if (!plainSecret || typeof plainSecret !== 'string') {
+        throw new Error(`Secret ${secretArn} has no string value`);
+      }
+      return plainSecret;
+    }
+    throw error;
   }
-
-  // Cache the secret
-  secretsCache.set(secretArn, {
-    value: secretValue,
-    expiry: Date.now() + CACHE_TTL_MS,
-  });
-
-  logger.info('Secret fetched and cached', { secretArn });
-
-  return secretValue;
 };
 
 export interface SlackSecrets {
@@ -86,6 +72,9 @@ export interface SlackSecrets {
   readonly botToken: string;
 }
 
+/**
+ * Retrieve Slack secrets (signing secret and bot token) in parallel.
+ */
 export const getSlackSecrets = async (
   signingSecretArn: string,
   botTokenArn: string

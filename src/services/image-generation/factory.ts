@@ -1,7 +1,7 @@
 import { Logger } from '@aws-lambda-powertools/logger';
 import type { ImageGenerator, ImageProvider, BedrockModel, GeminiModel } from './types';
 import { createBedrockProvider } from './bedrock-provider';
-import { createGeminiProvider, createGeminiFlashProvider } from './gemini-provider';
+import { createGeminiProvider } from './gemini-provider';
 
 const logger = new Logger({ serviceName: 't-shirt-generator' });
 
@@ -56,16 +56,12 @@ export const createImageGenerator = (config: ImageGeneratorFactoryConfig): Image
         throw new Error('Gemini API key is required for Gemini provider');
       }
 
-      // Option to use Gemini Flash (experimental) or Imagen 3
-      if (config.useGeminiFlash) {
-        return createGeminiFlashProvider({
-          apiKey: config.geminiApiKey,
-        });
-      }
+      // Use Gemini Flash for faster/cheaper generation, or Pro for higher quality
+      const geminiModel = config.useGeminiFlash ? 'gemini-2.5-flash' : (config.geminiModel ?? 'gemini-3-pro');
 
       return createGeminiProvider({
         apiKey: config.geminiApiKey,
-        model: config.geminiModel ?? 'imagen-3',
+        model: geminiModel,
       });
     }
 
