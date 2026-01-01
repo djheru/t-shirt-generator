@@ -9,11 +9,16 @@ export interface SlackSecrets {
   readonly botToken: secretsmanager.ISecret;
 }
 
+export interface ProviderSecrets {
+  readonly geminiApiKey: secretsmanager.ISecret;
+}
+
 export class StorageStack extends cdk.Stack {
   public readonly imagesBucket: s3.Bucket;
   public readonly requestsTable: dynamodb.Table;
   public readonly imagesTable: dynamodb.Table;
   public readonly slackSecrets: SlackSecrets;
+  public readonly providerSecrets: ProviderSecrets;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -128,6 +133,20 @@ export class StorageStack extends cdk.Stack {
       botToken,
     };
 
+    // Secrets Manager for provider credentials (Gemini)
+    const geminiApiKey = new secretsmanager.Secret(this, 'GeminiApiKey', {
+      secretName: 't-shirt-generator/gemini-api-key',
+      description: 'Google Gemini API key for image generation (only needed if using Gemini provider)',
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ placeholder: true }),
+        generateStringKey: 'value',
+      },
+    });
+
+    this.providerSecrets = {
+      geminiApiKey,
+    };
+
     // Outputs
     new cdk.CfnOutput(this, 'ImagesBucketName', {
       value: this.imagesBucket.bucketName,
@@ -157,6 +176,12 @@ export class StorageStack extends cdk.Stack {
       value: botToken.secretArn,
       description: 'ARN of the Slack bot token (update value after deployment)',
       exportName: 'TShirtGeneratorSlackBotTokenArn',
+    });
+
+    new cdk.CfnOutput(this, 'GeminiApiKeyArn', {
+      value: geminiApiKey.secretArn,
+      description: 'ARN of the Gemini API key (only needed if using Gemini provider)',
+      exportName: 'TShirtGeneratorGeminiApiKeyArn',
     });
   }
 }

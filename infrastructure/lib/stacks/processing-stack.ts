@@ -7,7 +7,7 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import type { Construct } from 'constructs';
-import type { SlackSecrets } from './storage-stack';
+import type { SlackSecrets, ProviderSecrets } from './storage-stack';
 import * as path from 'node:path';
 
 export interface ProcessingStackProps extends cdk.StackProps {
@@ -15,6 +15,7 @@ export interface ProcessingStackProps extends cdk.StackProps {
   readonly requestsTable: dynamodb.ITable;
   readonly imagesTable: dynamodb.ITable;
   readonly slackSecrets: SlackSecrets;
+  readonly providerSecrets: ProviderSecrets;
 }
 
 export class ProcessingStack extends cdk.Stack {
@@ -28,7 +29,7 @@ export class ProcessingStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ProcessingStackProps) {
     super(scope, id, props);
 
-    const { imagesBucket, requestsTable, imagesTable, slackSecrets } = props;
+    const { imagesBucket, requestsTable, imagesTable, slackSecrets, providerSecrets } = props;
 
     // Dead Letter Queues
     const generationDlq = new sqs.Queue(this, 'GenerationDLQ', {
@@ -69,7 +70,11 @@ export class ProcessingStack extends cdk.Stack {
       IMAGES_TABLE: imagesTable.tableName,
       GENERATION_QUEUE_URL: this.generationQueue.queueUrl,
       ACTION_QUEUE_URL: this.actionQueue.queueUrl,
+      // Image provider configuration - defaults to Bedrock
+      IMAGE_PROVIDER: 'bedrock', // Can be 'bedrock' or 'gemini'
       BEDROCK_MODEL: 'titan',
+      GEMINI_MODEL: 'imagen-3',
+      USE_GEMINI_FLASH: 'false',
       ALLOWED_CHANNEL_ID: '', // Must be set after deployment
       PRESIGNED_URL_EXPIRY: '604800',
       NODE_OPTIONS: '--enable-source-maps',
@@ -159,6 +164,10 @@ export class ProcessingStack extends cdk.Stack {
     this.interactionHandler.addEnvironment('SLACK_BOT_TOKEN_ARN', secretEnvVars.SLACK_BOT_TOKEN_ARN);
     this.imageGenerator.addEnvironment('SLACK_BOT_TOKEN_ARN', secretEnvVars.SLACK_BOT_TOKEN_ARN);
     this.actionProcessor.addEnvironment('SLACK_BOT_TOKEN_ARN', secretEnvVars.SLACK_BOT_TOKEN_ARN);
+
+    // Grant Gemini API key access to image generator (for when using Gemini provider)
+    providerSecrets.geminiApiKey.grantRead(this.imageGenerator);
+    this.imageGenerator.addEnvironment('GEMINI_API_KEY_ARN', providerSecrets.geminiApiKey.secretArn);
 
     // Grant SQS permissions
     this.generationQueue.grantSendMessages(this.webhookHandler);

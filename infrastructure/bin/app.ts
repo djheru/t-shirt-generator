@@ -24,6 +24,7 @@ const processingStack = new ProcessingStack(app, 'TShirtGeneratorProcessing', {
   requestsTable: storageStack.requestsTable,
   imagesTable: storageStack.imagesTable,
   slackSecrets: storageStack.slackSecrets,
+  providerSecrets: storageStack.providerSecrets,
 });
 
 new ApiStack(app, 'TShirtGeneratorApi', {

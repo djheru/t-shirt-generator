@@ -1,6 +1,7 @@
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
+  ThrottlingException,
 } from '@aws-sdk/client-bedrock-runtime';
 import { Logger } from '@aws-lambda-powertools/logger';
 import type { BedrockModel, BedrockGenerationResult } from '../../types/domain.types';
@@ -10,15 +11,74 @@ const logger = new Logger({ serviceName: 't-shirt-generator' });
 
 let bedrockClient: BedrockRuntimeClient | null = null;
 
+// Retry configuration
+const MAX_RETRIES = 5;
+const BASE_DELAY_MS = 2000; // Start with 2 seconds
+const MAX_DELAY_MS = 30000; // Max 30 seconds
+
 export const getBedrockClient = (): BedrockRuntimeClient => {
   if (!bedrockClient) {
-    bedrockClient = new BedrockRuntimeClient({});
+    bedrockClient = new BedrockRuntimeClient({
+      maxAttempts: 3, // SDK-level retries
+    });
   }
   return bedrockClient;
 };
 
 export const resetBedrockClient = (): void => {
   bedrockClient = null;
+};
+
+// Sleep helper for retry delays
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+// Retry wrapper with exponential backoff for throttling
+const withRetry = async <T>(
+  operation: () => Promise<T>,
+  operationName: string
+): Promise<T> => {
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error as Error;
+
+      // Check if it's a throttling error
+      const isThrottling =
+        error instanceof ThrottlingException ||
+        (error as Error).name === 'ThrottlingException' ||
+        (error as Error).message?.includes('ThrottlingException') ||
+        (error as Error).message?.includes('Too many requests');
+
+      if (!isThrottling) {
+        // Not a throttling error, don't retry
+        throw error;
+      }
+
+      if (attempt < MAX_RETRIES - 1) {
+        // Calculate delay with exponential backoff and jitter
+        const baseDelay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt), MAX_DELAY_MS);
+        const jitter = Math.random() * 1000; // Add up to 1 second of jitter
+        const delay = baseDelay + jitter;
+
+        logger.warn(`${operationName} throttled, retrying in ${Math.round(delay)}ms`, {
+          attempt: attempt + 1,
+          maxRetries: MAX_RETRIES,
+          delay: Math.round(delay),
+        });
+
+        await sleep(delay);
+      }
+    }
+  }
+
+  logger.error(`${operationName} failed after ${MAX_RETRIES} retries`, {
+    error: lastError,
+  });
+  throw lastError;
 };
 
 export interface GenerateImagesParams {
@@ -145,7 +205,12 @@ const generateWithTitan = async ({
     body: JSON.stringify(requestBody),
   });
 
-  const response = await client.send(command);
+  // Use retry wrapper for throttling resilience
+  const response = await withRetry(
+    () => client.send(command),
+    'Titan image generation'
+  );
+
   const responseBody = JSON.parse(
     new TextDecoder().decode(response.body)
   ) as TitanImageGenerationResponse;
@@ -185,7 +250,10 @@ const generateWithSDXL = async ({
   seed,
 }: SDXLGenerationParams): Promise<BedrockGenerationResult> => {
   // SDXL generates one image per call, so we need to make multiple calls
-  const generationPromises = Array.from({ length: imageCount }, async (_, index) => {
+  // We generate SEQUENTIALLY to avoid throttling on accounts with low quotas
+  const images: Buffer[] = [];
+
+  for (let index = 0; index < imageCount; index++) {
     const requestBody = {
       text_prompts: [
         { text: prompt, weight: 1.0 },
@@ -208,7 +276,12 @@ const generateWithSDXL = async ({
       body: JSON.stringify(requestBody),
     });
 
-    const response = await client.send(command);
+    // Use retry wrapper for throttling resilience
+    const response = await withRetry(
+      () => client.send(command),
+      `SDXL image generation (${index + 1}/${imageCount})`
+    );
+
     const responseBody = JSON.parse(
       new TextDecoder().decode(response.body)
     ) as SDXLImageGenerationResponse;
@@ -217,11 +290,13 @@ const generateWithSDXL = async ({
       throw new Error(`SDXL generation returned no artifacts for image ${index}`);
     }
 
-    return Buffer.from(responseBody.artifacts[0].base64, 'base64');
-  });
+    images.push(Buffer.from(responseBody.artifacts[0].base64, 'base64'));
 
-  // Generate all images concurrently
-  const images = await Promise.all(generationPromises);
+    // Add a small delay between requests to avoid throttling
+    if (index < imageCount - 1) {
+      await sleep(1000); // 1 second delay between images
+    }
+  }
 
   logger.info('SDXL generation complete', {
     imageCount: images.length,

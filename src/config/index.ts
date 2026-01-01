@@ -1,4 +1,21 @@
-import type { BedrockModel, PromptEnhancementConfig } from '../types/domain.types';
+import type { PromptEnhancementConfig } from '../types/domain.types';
+import type {
+  ImageProvider,
+  BedrockModel,
+  GeminiModel,
+} from '../services/image-generation';
+
+interface ImageGenerationConfig {
+  readonly provider: ImageProvider;
+  readonly bedrockModel: BedrockModel;
+  readonly geminiModel: GeminiModel;
+  readonly geminiApiKeyArn?: string;
+  readonly useGeminiFlash: boolean;
+  readonly imageCount: number;
+  readonly imageWidth: number;
+  readonly imageHeight: number;
+  readonly cfgScale: number;
+}
 
 interface Config {
   readonly slack: {
@@ -6,13 +23,7 @@ interface Config {
     readonly botToken: string;
     readonly allowedChannelId: string;
   };
-  readonly bedrock: {
-    readonly model: BedrockModel;
-    readonly imageCount: number;
-    readonly imageWidth: number;
-    readonly imageHeight: number;
-    readonly cfgScale: number;
-  };
+  readonly imageGeneration: ImageGenerationConfig;
   readonly storage: {
     readonly imagesBucket: string;
     readonly requestsTable: string;
@@ -34,11 +45,25 @@ const getEnvOrDefault = (key: string, defaultValue: string): string => {
   return process.env[key] ?? defaultValue;
 };
 
+const parseImageProvider = (value: string): ImageProvider => {
+  if (value === 'bedrock' || value === 'gemini') {
+    return value;
+  }
+  throw new Error(`Invalid IMAGE_PROVIDER value: ${value}. Must be 'bedrock' or 'gemini'`);
+};
+
 const parseBedrockModel = (value: string): BedrockModel => {
   if (value === 'titan' || value === 'sdxl') {
     return value;
   }
   throw new Error(`Invalid BEDROCK_MODEL value: ${value}. Must be 'titan' or 'sdxl'`);
+};
+
+const parseGeminiModel = (value: string): GeminiModel => {
+  if (value === 'imagen-3') {
+    return value;
+  }
+  throw new Error(`Invalid GEMINI_MODEL value: ${value}. Must be 'imagen-3'`);
 };
 
 export const getConfig = (): Config => ({
@@ -47,8 +72,12 @@ export const getConfig = (): Config => ({
     botToken: getEnvOrThrow('SLACK_BOT_TOKEN'),
     allowedChannelId: getEnvOrThrow('ALLOWED_CHANNEL_ID'),
   },
-  bedrock: {
-    model: parseBedrockModel(getEnvOrDefault('BEDROCK_MODEL', 'titan')),
+  imageGeneration: {
+    provider: parseImageProvider(getEnvOrDefault('IMAGE_PROVIDER', 'bedrock')),
+    bedrockModel: parseBedrockModel(getEnvOrDefault('BEDROCK_MODEL', 'titan')),
+    geminiModel: parseGeminiModel(getEnvOrDefault('GEMINI_MODEL', 'imagen-3')),
+    geminiApiKeyArn: process.env.GEMINI_API_KEY_ARN,
+    useGeminiFlash: getEnvOrDefault('USE_GEMINI_FLASH', 'false') === 'true',
     imageCount: 3,
     imageWidth: 1024,
     imageHeight: 1024,

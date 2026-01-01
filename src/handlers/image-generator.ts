@@ -2,10 +2,12 @@ import type { SQSEvent, SQSBatchResponse } from 'aws-lambda';
 import { Logger } from '@aws-lambda-powertools/logger';
 import { v4 as uuidv4 } from 'uuid';
 import {
-  generateImages,
+  createImageGeneratorFromEnv,
   enhancePrompt,
   buildNegativePrompt,
-} from '../services/bedrock';
+  type ImageGenerator,
+  type PromptEnhancementConfig,
+} from '../services/image-generation';
 import {
   uploadImage,
   buildTempImageKey,
@@ -23,8 +25,11 @@ import {
   buildGenerationFailedMessage,
 } from '../services/slack';
 import { GenerationJobMessageSchema } from '../types/domain.types';
-import type { GeneratedImage, BedrockModel } from '../types/domain.types';
+import type { GeneratedImage } from '../types/domain.types';
 import type { GeneratedImageInfo } from '../services/slack/messages';
+
+// Cached image generator instance
+let imageGenerator: ImageGenerator | null = null;
 
 const logger = new Logger({ serviceName: 't-shirt-generator', logLevel: 'INFO' });
 
@@ -67,7 +72,6 @@ const processGenerationJob = async (messageBody: string): Promise<void> => {
   const requestsTable = process.env.REQUESTS_TABLE;
   const imagesTable = process.env.IMAGES_TABLE;
   const botTokenArn = process.env.SLACK_BOT_TOKEN_ARN;
-  const bedrockModel = (process.env.BEDROCK_MODEL ?? 'titan') as BedrockModel;
 
   if (!imagesBucket || !requestsTable || !imagesTable || !botTokenArn) {
     throw new Error('Missing required environment variables');
@@ -75,6 +79,15 @@ const processGenerationJob = async (messageBody: string): Promise<void> => {
 
   // Get Slack bot token
   const botToken = await getSecretValue(botTokenArn);
+
+  // Initialize image generator (cached across invocations)
+  if (!imageGenerator) {
+    imageGenerator = await createImageGeneratorFromEnv(getSecretValue);
+    logger.info('Image generator initialized', {
+      provider: imageGenerator.getProvider(),
+      model: imageGenerator.getModel(),
+    });
+  }
 
   // Update request status to generating
   await updateRequestStatus({
@@ -84,23 +97,21 @@ const processGenerationJob = async (messageBody: string): Promise<void> => {
   });
 
   try {
-    // Enhance prompt with t-shirt design refinements
-    const promptSuffix =
-      process.env.PROMPT_SUFFIX ??
-      ', high quality, professional graphic design, suitable for t-shirt print, bold colors';
-    const negativePromptBase =
-      process.env.NEGATIVE_PROMPT ??
-      'blurry, low quality, distorted, watermark, text, words, letters, signature, logo';
-    const transparencySuffix =
-      ', isolated on transparent background, no background, PNG with alpha channel';
-    const transparencyNegativePrompt = ', background, backdrop, scenery, environment';
+    // Build prompt enhancement configuration
+    const promptEnhancementConfig: PromptEnhancementConfig = {
+      suffix:
+        process.env.PROMPT_SUFFIX ??
+        ', high quality, professional graphic design, suitable for t-shirt print, bold colors',
+      negativePrompt:
+        process.env.NEGATIVE_PROMPT ??
+        'blurry, low quality, distorted, watermark, text, words, letters, signature, logo',
+      transparencySuffix:
+        ', isolated on transparent background, no background, PNG with alpha channel',
+      transparencyNegativePrompt: ', background, backdrop, scenery, environment',
+    };
 
-    const enhancedPrompt = enhancePrompt(prompt, promptSuffix, transparencySuffix);
-    const negativePrompt = buildNegativePrompt(
-      negativePromptBase,
-      transparencyNegativePrompt,
-      prompt
-    );
+    const enhancedPrompt = enhancePrompt(prompt, promptEnhancementConfig);
+    const negativePrompt = buildNegativePrompt(prompt, promptEnhancementConfig);
 
     logger.info('Enhanced prompt', {
       original: prompt,
@@ -108,11 +119,10 @@ const processGenerationJob = async (messageBody: string): Promise<void> => {
       negativePrompt,
     });
 
-    // Generate images
-    const generationResult = await generateImages({
+    // Generate images using the configured provider
+    const generationResult = await imageGenerator.generate({
       prompt: enhancedPrompt,
       negativePrompt,
-      model: bedrockModel,
       imageCount: 3,
       width: 1024,
       height: 1024,
