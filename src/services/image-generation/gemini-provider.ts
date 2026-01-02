@@ -96,17 +96,40 @@ export const createGeminiProvider = (config: GeminiProviderConfig): ImageGenerat
         model,
         modelId,
         imageCount: params.imageCount,
+        aspectRatio: params.aspectRatio ?? '1:1',
         promptLength: params.prompt.length,
       });
 
       try {
+        // Build image config for aspect ratio and size
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const imageConfig: any = {};
+
+        // Add aspect ratio if specified (Gemini supports: 1:1, 3:4, 4:3, 9:16, 16:9, etc.)
+        if (params.aspectRatio) {
+          imageConfig.aspectRatio = params.aspectRatio;
+        }
+
+        // Request 4K resolution for Gemini 3 Pro for print-quality output
+        if (model === 'gemini-3-pro') {
+          imageConfig.imageSize = '4K';
+        }
+
+        // Build generation config with image output settings
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const generationConfig: any = {
+          responseModalities: ['IMAGE'],
+        };
+
+        // Only add imageConfig if it has properties
+        if (Object.keys(imageConfig).length > 0) {
+          generationConfig.imageConfig = imageConfig;
+        }
+
         // Configure the model with image generation capabilities
         const imageModel = genAI.getGenerativeModel({
           model: modelId,
-          generationConfig: {
-            // @ts-expect-error - responseModalities not in types yet
-            responseModalities: ['TEXT', 'IMAGE'],
-          },
+          generationConfig,
         });
 
         const images: Buffer[] = [];
@@ -115,10 +138,16 @@ export const createGeminiProvider = (config: GeminiProviderConfig): ImageGenerat
         for (let i = 0; i < params.imageCount; i++) {
           logger.debug('Generating image', { index: i + 1, total: params.imageCount });
 
-          // Build the prompt - incorporate negative prompt as guidance
-          let fullPrompt = `Generate an image: ${params.prompt}`;
+          // The prompt is already a complete narrative from buildDTGPrompt
+          // Append avoidance guidance as additional context
+          let fullPrompt = params.prompt;
           if (params.negativePrompt) {
-            fullPrompt += `. Do not include: ${params.negativePrompt}`;
+            fullPrompt += `\n\n${params.negativePrompt}`;
+          }
+
+          // Add variation hint for multiple images
+          if (params.imageCount > 1) {
+            fullPrompt += `\n\nThis is variation ${i + 1} of ${params.imageCount}. Create a unique interpretation while maintaining the core design concept.`;
           }
 
           const result = await withRetry(async () => {

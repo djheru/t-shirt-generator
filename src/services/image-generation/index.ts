@@ -12,6 +12,7 @@ export type {
   ImageProvider,
   BedrockModel,
   GeminiModel,
+  AspectRatio,
   GenerateImagesParams,
   GeneratedImageResult,
   ImageGeneratorConfig,
@@ -19,7 +20,17 @@ export type {
   PromptEnhancementConfig,
 } from './types';
 
-export { needsTransparency, enhancePrompt, buildNegativePrompt } from './types';
+// DTG prompt building utilities
+export {
+  buildDTGPrompt,
+  buildAvoidanceGuidance,
+  needsTransparency,
+  requestsSolidBackground,
+  containsTextRequest,
+} from './types';
+
+// Legacy exports (deprecated)
+export { enhancePrompt, buildNegativePrompt } from './types';
 
 // Factory functions
 export {

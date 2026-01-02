@@ -3,10 +3,9 @@ import { Logger } from '@aws-lambda-powertools/logger';
 import { v4 as uuidv4 } from 'uuid';
 import {
   createImageGeneratorFromEnv,
-  enhancePrompt,
-  buildNegativePrompt,
+  buildDTGPrompt,
+  buildAvoidanceGuidance,
   type ImageGenerator,
-  type PromptEnhancementConfig,
 } from '../services/image-generation';
 import {
   uploadImage,
@@ -98,35 +97,23 @@ const processGenerationJob = async (messageBody: string): Promise<void> => {
   });
 
   try {
-    // Build prompt enhancement configuration
-    const promptEnhancementConfig: PromptEnhancementConfig = {
-      suffix:
-        process.env.PROMPT_SUFFIX ??
-        ', high quality, professional graphic design, suitable for t-shirt print, bold colors',
-      negativePrompt:
-        process.env.NEGATIVE_PROMPT ??
-        'blurry, low quality, distorted, watermark, text, words, letters, signature, logo',
-      transparencySuffix:
-        ', isolated on transparent background, no background, PNG with alpha channel',
-      transparencyNegativePrompt: ', background, backdrop, scenery, environment',
-    };
+    // Build DTG-optimized prompt using narrative description style
+    const enhancedPrompt = buildDTGPrompt(prompt);
+    const avoidanceGuidance = buildAvoidanceGuidance(prompt);
 
-    const enhancedPrompt = enhancePrompt(prompt, promptEnhancementConfig);
-    const negativePrompt = buildNegativePrompt(prompt, promptEnhancementConfig);
-
-    logger.info('Enhanced prompt', {
+    logger.info('Enhanced prompt for DTG printing', {
       original: prompt,
       enhanced: enhancedPrompt,
-      negativePrompt,
+      avoidanceGuidance,
     });
 
     // Generate images using the configured provider
+    // Using 4:5 aspect ratio to match DTG print area (4500x5100 at 300dpi)
     const generationResult = await imageGenerator.generate({
       prompt: enhancedPrompt,
-      negativePrompt,
+      negativePrompt: avoidanceGuidance,
       imageCount: 3,
-      width: 1024,
-      height: 1024,
+      aspectRatio: '4:5',
       cfgScale: 8.0,
     });
 

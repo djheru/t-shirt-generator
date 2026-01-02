@@ -9,6 +9,7 @@ import type {
   GenerateImagesParams,
   GeneratedImageResult,
   BedrockModel,
+  AspectRatio,
 } from './types';
 
 const logger = new Logger({ serviceName: 't-shirt-generator' });
@@ -21,6 +22,53 @@ const MAX_DELAY_MS = 30000;
 const BEDROCK_MODEL_IDS: Record<BedrockModel, string> = {
   titan: 'amazon.titan-image-generator-v2:0',
   sdxl: 'stability.stable-diffusion-xl-v1',
+};
+
+// Max resolutions for each model
+const MAX_RESOLUTIONS: Record<BedrockModel, number> = {
+  titan: 2048, // Titan v2 supports up to 2048x2048
+  sdxl: 1024,  // SDXL supports up to 1024x1024
+};
+
+/**
+ * Convert aspect ratio to dimensions, maximizing resolution within model limits.
+ * Both Titan and SDXL require dimensions to be multiples of 64.
+ */
+const aspectRatioToDimensions = (
+  aspectRatio: AspectRatio | undefined,
+  model: BedrockModel
+): { width: number; height: number } => {
+  const maxSize = MAX_RESOLUTIONS[model];
+
+  if (!aspectRatio || aspectRatio === '1:1') {
+    return { width: maxSize, height: maxSize };
+  }
+
+  const [w, h] = aspectRatio.split(':').map(Number);
+  const ratio = w / h;
+
+  let width: number;
+  let height: number;
+
+  if (ratio > 1) {
+    // Landscape
+    width = maxSize;
+    height = Math.round(maxSize / ratio);
+  } else {
+    // Portrait
+    height = maxSize;
+    width = Math.round(maxSize * ratio);
+  }
+
+  // Round to nearest 64 (required by both models)
+  width = Math.round(width / 64) * 64;
+  height = Math.round(height / 64) * 64;
+
+  // Ensure we don't exceed max
+  width = Math.min(width, maxSize);
+  height = Math.min(height, maxSize);
+
+  return { width, height };
 };
 
 interface TitanImageGenerationResponse {
@@ -99,6 +147,9 @@ export const createBedrockProvider = (config: BedrockProviderConfig): ImageGener
   const generateWithTitan = async (
     params: GenerateImagesParams
   ): Promise<Buffer[]> => {
+    // Calculate dimensions from aspect ratio, maximizing resolution
+    const dimensions = aspectRatioToDimensions(params.aspectRatio, 'titan');
+
     const requestBody = {
       taskType: 'TEXT_IMAGE',
       textToImageParams: {
@@ -107,8 +158,8 @@ export const createBedrockProvider = (config: BedrockProviderConfig): ImageGener
       },
       imageGenerationConfig: {
         numberOfImages: params.imageCount,
-        width: params.width ?? 1024,
-        height: params.height ?? 1024,
+        width: params.width ?? dimensions.width,
+        height: params.height ?? dimensions.height,
         cfgScale: params.cfgScale ?? 8.0,
         ...(params.seed !== undefined && { seed: params.seed }),
       },
@@ -144,6 +195,8 @@ export const createBedrockProvider = (config: BedrockProviderConfig): ImageGener
   const generateWithSDXL = async (
     params: GenerateImagesParams
   ): Promise<Buffer[]> => {
+    // Calculate dimensions from aspect ratio, maximizing resolution
+    const dimensions = aspectRatioToDimensions(params.aspectRatio, 'sdxl');
     const images: Buffer[] = [];
 
     for (let index = 0; index < params.imageCount; index++) {
@@ -155,8 +208,8 @@ export const createBedrockProvider = (config: BedrockProviderConfig): ImageGener
             : []),
         ],
         cfg_scale: params.cfgScale ?? 8.0,
-        width: params.width ?? 1024,
-        height: params.height ?? 1024,
+        width: params.width ?? dimensions.width,
+        height: params.height ?? dimensions.height,
         samples: 1,
         steps: 50,
         ...(params.seed !== undefined && { seed: params.seed + index }),
@@ -200,12 +253,14 @@ export const createBedrockProvider = (config: BedrockProviderConfig): ImageGener
 
   return {
     async generate(params: GenerateImagesParams): Promise<GeneratedImageResult> {
+      const dimensions = aspectRatioToDimensions(params.aspectRatio, model);
       logger.info('Generating images with Bedrock', {
         model,
         modelId,
         imageCount: params.imageCount,
-        width: params.width ?? 1024,
-        height: params.height ?? 1024,
+        aspectRatio: params.aspectRatio ?? '1:1',
+        width: params.width ?? dimensions.width,
+        height: params.height ?? dimensions.height,
         promptLength: params.prompt.length,
       });
 
