@@ -5,6 +5,8 @@ import {
   createImageGeneratorFromEnv,
   buildDTGPrompt,
   buildAvoidanceGuidance,
+  requestsSolidBackground,
+  removeWhiteBackgroundBatch,
   type ImageGenerator,
 } from '../services/image-generation';
 import {
@@ -122,11 +124,24 @@ const processGenerationJob = async (messageBody: string): Promise<void> => {
       model: generationResult.model,
     });
 
+    // Post-process images to add true transparency if needed
+    // AI models render checkered patterns instead of true alpha, so we generate
+    // on solid white background and remove it here
+    let processedImages = generationResult.images;
+
+    if (!requestsSolidBackground(prompt)) {
+      logger.info('Removing white backgrounds for transparency');
+      processedImages = await removeWhiteBackgroundBatch(generationResult.images);
+      logger.info('Background removal complete', {
+        count: processedImages.length,
+      });
+    }
+
     // Upload images to S3 and create records
     const imageInfos: GeneratedImageInfo[] = [];
     const now = new Date().toISOString();
 
-    const uploadPromises = generationResult.images.map(async (imageBuffer, index) => {
+    const uploadPromises = processedImages.map(async (imageBuffer, index) => {
       const imageId = uuidv4();
       const s3Key = buildTempImageKey(requestId, imageId);
 

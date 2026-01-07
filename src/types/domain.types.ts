@@ -47,6 +47,13 @@ export interface ActionJobMessage {
   readonly originalPrompt?: string;
 }
 
+export interface IdeationJobMessage {
+  readonly theme: string;
+  readonly userId: string;
+  readonly channelId: string;
+  readonly responseUrl: string;
+}
+
 export const GenerationJobMessageSchema = z.object({
   requestId: z.string().uuid(),
   userId: z.string().min(1),
@@ -63,6 +70,13 @@ export const ActionJobMessageSchema = z.object({
   channelId: z.string().min(1),
   responseUrl: z.string().url(),
   originalPrompt: z.string().optional(),
+});
+
+export const IdeationJobMessageSchema = z.object({
+  theme: z.string().min(1).max(500),
+  userId: z.string().min(1),
+  channelId: z.string().min(1),
+  responseUrl: z.string().url(),
 });
 
 export interface PromptEnhancementConfig {

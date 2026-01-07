@@ -45,3 +45,10 @@ export type { BedrockProviderConfig } from './bedrock-provider';
 
 export { createGeminiProvider, createGeminiFlashProvider } from './gemini-provider';
 export type { GeminiProviderConfig } from './gemini-provider';
+
+// Background removal for transparency
+export {
+  removeWhiteBackground,
+  removeWhiteBackgroundBatch,
+} from './background-removal';
+export type { BackgroundRemovalConfig } from './background-removal';

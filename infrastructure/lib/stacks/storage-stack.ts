@@ -13,6 +13,7 @@ export interface SlackSecrets {
 
 export interface ProviderSecrets {
   readonly geminiApiKey: secretsmanager.ISecret;
+  readonly anthropicApiKey: secretsmanager.ISecret;
 }
 
 export class StorageStack extends cdk.Stack {
@@ -160,8 +161,19 @@ export class StorageStack extends cdk.Stack {
       },
     });
 
+    // Secrets Manager for Anthropic API key (for prompt ideation with Claude)
+    const anthropicApiKey = new secretsmanager.Secret(this, 'AnthropicApiKey', {
+      secretName: 't-shirt-generator/anthropic-api-key',
+      description: 'Anthropic API key for prompt ideation with Claude',
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ placeholder: true }),
+        generateStringKey: 'value',
+      },
+    });
+
     this.providerSecrets = {
       geminiApiKey,
+      anthropicApiKey,
     };
 
     // Outputs
@@ -199,6 +211,12 @@ export class StorageStack extends cdk.Stack {
       value: geminiApiKey.secretArn,
       description: 'ARN of the Gemini API key (only needed if using Gemini provider)',
       exportName: 'TShirtGeneratorGeminiApiKeyArn',
+    });
+
+    new cdk.CfnOutput(this, 'AnthropicApiKeyArn', {
+      value: anthropicApiKey.secretArn,
+      description: 'ARN of the Anthropic API key for prompt ideation',
+      exportName: 'TShirtGeneratorAnthropicApiKeyArn',
     });
 
     new cdk.CfnOutput(this, 'ImagesCdnDomain', {

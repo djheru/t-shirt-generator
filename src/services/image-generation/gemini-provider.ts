@@ -145,9 +145,17 @@ export const createGeminiProvider = (config: GeminiProviderConfig): ImageGenerat
             fullPrompt += `\n\n${params.negativePrompt}`;
           }
 
-          // Add variation hint for multiple images
+          // Add distinct style variations for each image
           if (params.imageCount > 1) {
-            fullPrompt += `\n\nThis is variation ${i + 1} of ${params.imageCount}. Create a unique interpretation while maintaining the core design concept.`;
+            const styleVariations = [
+              'Use a bold, graphic illustration style with strong outlines and flat colors. Think screen-printed poster aesthetic.',
+              'Use a detailed, realistic artistic style with rich textures and depth. Think fine art or digital painting.',
+              'Use a minimalist, modern style with clean geometric shapes and limited color palette. Think contemporary design.',
+              'Use a vintage or retro aesthetic with weathered textures and nostalgic color tones. Think 70s/80s poster art.',
+              'Use an abstract or stylized approach with dynamic composition and artistic interpretation.',
+            ];
+            const styleHint = styleVariations[i % styleVariations.length];
+            fullPrompt += `\n\nStyle direction for this variation: ${styleHint}`;
           }
 
           const result = await withRetry(async () => {

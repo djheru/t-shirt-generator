@@ -9,11 +9,13 @@ import {
   buildChannelRestrictionMessage,
   buildEmptyPromptMessage,
   buildErrorMessage,
+  buildEmptyThemeMessage,
+  buildIdeatingMessage,
 } from '../services/slack';
 import { createRequest } from '../services/storage/dynamo';
 import { getSlackSecrets } from '../services/storage/secrets';
-import { SlackSlashCommandSchema } from '../types/slack.types';
-import type { GenerationRequest, GenerationJobMessage } from '../types/domain.types';
+import { SlackSlashCommandSchema, type SlackSlashCommandPayload } from '../types/slack.types';
+import type { GenerationRequest, GenerationJobMessage, IdeationJobMessage } from '../types/domain.types';
 
 const logger = new Logger({ serviceName: 't-shirt-generator', logLevel: 'INFO' });
 
@@ -119,6 +121,15 @@ export const handler = async (
       };
     }
 
+    // Route based on command
+    const command = payload.command;
+    logger.info('Processing command', { command, text: payload.text });
+
+    if (command === '/ideate') {
+      return handleIdeateCommand(payload);
+    }
+
+    // Default to /generate command handling
     // Validate prompt
     const prompt = payload.text.trim();
     if (!prompt) {
@@ -198,4 +209,58 @@ export const handler = async (
       ),
     };
   }
+};
+
+/**
+ * Handle the /ideate command - queue job to generate creative prompts using Claude
+ */
+const handleIdeateCommand = async (
+  payload: SlackSlashCommandPayload
+): Promise<APIGatewayProxyResult> => {
+  const theme = payload.text.trim();
+
+  // Validate theme is provided
+  if (!theme) {
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildEmptyThemeMessage()),
+    };
+  }
+
+  logger.info('Processing ideate command', { theme, userId: payload.user_id });
+
+  // Queue ideation job
+  const queueUrl = process.env.IDEATION_QUEUE_URL;
+  if (!queueUrl) {
+    logger.error('IDEATION_QUEUE_URL environment variable not set');
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildErrorMessage('Service not configured')),
+    };
+  }
+
+  const jobMessage: IdeationJobMessage = {
+    theme,
+    userId: payload.user_id,
+    channelId: payload.channel_id,
+    responseUrl: payload.response_url,
+  };
+
+  const sqsCommand = new SendMessageCommand({
+    QueueUrl: queueUrl,
+    MessageBody: JSON.stringify(jobMessage),
+  });
+
+  await getSQSClient().send(sqsCommand);
+
+  logger.info('Ideation job queued', { theme, userId: payload.user_id });
+
+  // Return immediate acknowledgment
+  return {
+    statusCode: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildIdeatingMessage(theme)),
+  };
 };

@@ -97,12 +97,14 @@ export const buildDTGPrompt = (userPrompt: string): string => {
   const hasText = containsTextRequest(userPrompt);
 
   // Determine background handling
+  // NOTE: AI models cannot generate true PNG transparency - they render checkered patterns
+  // instead. We request a solid white background and remove it in post-processing.
   let backgroundGuidance: string;
   if (wantsSolidBackground) {
     backgroundGuidance = 'Place the design on a clean, solid background as specified.';
   } else if (wantsTransparency || !wantsSolidBackground) {
-    // Default to transparency for DTG printing
-    backgroundGuidance = 'Create the design as an isolated graphic element on a completely transparent background, with no backdrop or environmental elements. The graphic should float independently, ready for direct-to-garment printing.';
+    // Request solid white background for post-processing removal
+    backgroundGuidance = 'Create the design as an isolated graphic element on a pure solid white background (#FFFFFF). The background must be completely uniform white with no gradients, shadows, or variations. The graphic should have clean, crisp edges that contrast clearly against the white background.';
   } else {
     backgroundGuidance = '';
   }
@@ -138,6 +140,7 @@ export const buildDTGPrompt = (userPrompt: string): string => {
  */
 export const buildAvoidanceGuidance = (userPrompt: string): string => {
   const hasText = containsTextRequest(userPrompt);
+  const wantsSolidBackground = requestsSolidBackground(userPrompt);
 
   const avoidItems = [
     'mockups of t-shirts or clothing items',
@@ -151,6 +154,14 @@ export const buildAvoidanceGuidance = (userPrompt: string): string => {
   // Only avoid text if user didn't request it
   if (!hasText) {
     avoidItems.push('text, words, or lettering unless specifically requested');
+  }
+
+  // When we want transparency (solid white background for post-processing),
+  // avoid checkered patterns and gradients
+  if (!wantsSolidBackground) {
+    avoidItems.push('checkered patterns in the background');
+    avoidItems.push('gradient backgrounds');
+    avoidItems.push('off-white or cream backgrounds');
   }
 
   return `Avoid: ${avoidItems.join(', ')}`;

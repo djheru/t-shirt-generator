@@ -7,6 +7,7 @@ import type {
   SlackDividerBlock,
   SlackContextBlock,
 } from '../../types/slack.types';
+import type { ResearchInsights, PromptVariation } from '../anthropic';
 
 export interface GeneratedImageInfo {
   readonly imageId: string;
@@ -468,3 +469,132 @@ export const buildUpdatedImagesMessage = (
 
   return blocks;
 };
+
+// Ideation message builders
+
+export const buildIdeatingMessage = (theme: string): SlackResponse => ({
+  response_type: 'ephemeral',
+  text: `Researching trends and generating creative prompts for "${theme}"...\n\nThis may take 15-30 seconds as we search for current trends.`,
+});
+
+export const buildEmptyThemeMessage = (): SlackResponse => ({
+  response_type: 'ephemeral',
+  text: 'Please provide theme keywords. Usage: `/ideate <theme keywords>`\n\nExample: `/ideate retro gaming 80s`',
+});
+
+export interface IdeationResultParams {
+  readonly theme: string;
+  readonly research_insights: ResearchInsights;
+  readonly prompts: PromptVariation[];
+}
+
+export const buildIdeationResultMessage = (
+  result: IdeationResultParams
+): SlackBlock[] => {
+  const { theme, research_insights, prompts } = result;
+  const blocks: SlackBlock[] = [];
+
+  // Header section
+  const headerBlock: SlackSectionBlock = {
+    type: 'section',
+    text: {
+      type: 'mrkdwn',
+      text: `*Rise Wear Design Prompts: "${theme}"*`,
+    },
+  };
+  blocks.push(headerBlock);
+
+  // Divider
+  const divider: SlackDividerBlock = {
+    type: 'divider',
+  };
+  blocks.push(divider);
+
+  // Research insights section
+  const insightsHeader: SlackSectionBlock = {
+    type: 'section',
+    text: {
+      type: 'mrkdwn',
+      text: '*📊 Market Research Insights*',
+    },
+  };
+  blocks.push(insightsHeader);
+
+  // Market context
+  const contextBlock: SlackSectionBlock = {
+    type: 'section',
+    text: {
+      type: 'mrkdwn',
+      text: `_${research_insights.market_context}_`,
+    },
+  };
+  blocks.push(contextBlock);
+
+  // Trending keywords
+  if (research_insights.trending_keywords.length > 0) {
+    const keywordsBlock: SlackSectionBlock = {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Trending Keywords:* ${research_insights.trending_keywords.slice(0, 8).join(' • ')}`,
+      },
+    };
+    blocks.push(keywordsBlock);
+  }
+
+  // Popular visuals
+  if (research_insights.popular_visuals.length > 0) {
+    const visualsBlock: SlackSectionBlock = {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Visual Trends:* ${research_insights.popular_visuals.slice(0, 5).join(' • ')}`,
+      },
+    };
+    blocks.push(visualsBlock);
+  }
+
+  blocks.push(divider);
+
+  // Prompts header
+  const promptsHeader: SlackSectionBlock = {
+    type: 'section',
+    text: {
+      type: 'mrkdwn',
+      text: `*🎨 Design Prompts (${prompts.length})*\n_Use with_ \`/generate <prompt>\``,
+    },
+  };
+  blocks.push(promptsHeader);
+
+  // Each prompt with name, concept, and copyable prompt
+  for (let i = 0; i < prompts.length; i++) {
+    const p = prompts[i];
+
+    // Prompt header with name and concept
+    const promptHeaderBlock: SlackSectionBlock = {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*${i + 1}. ${p.name}*\n_${p.concept}_`,
+      },
+    };
+    blocks.push(promptHeaderBlock);
+
+    // The actual prompt in a code block for easy copying
+    const promptTextBlock: SlackSectionBlock = {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `\`\`\`${p.prompt}\`\`\``,
+      },
+    };
+    blocks.push(promptTextBlock);
+  }
+
+  return blocks;
+};
+
+export const buildIdeationFailedMessage = (error: string): SlackResponse => ({
+  response_type: 'ephemeral',
+  text: `Failed to generate prompts: ${error}\n\nPlease try again.`,
+});

@@ -24,19 +24,10 @@
     "resolveJsonModule": true,
     "outDir": "dist",
     "rootDir": ".",
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
-  "include": [
-    "src/**/*",
-    "infrastructure/**/*",
-    "test/**/*"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "cdk.out"
-  ]
+  "include": ["src/**/*", "infrastructure/**/*", "test/**/*"],
+  "exclude": ["node_modules", "dist", "cdk.out"]
 }

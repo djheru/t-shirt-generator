@@ -1,6 +1,10 @@
 # T-Shirt Generator
 
-A Slack-integrated application that generates t-shirt graphics using AI image generation. Supports **Amazon Bedrock** (Titan, SDXL) and **Google Gemini** (Imagen 3) as providers. Users submit prompts via a Slack slash command, receive AI-generated images, and can keep, discard, or regenerate them.
+A Slack-integrated application that generates t-shirt graphics using AI image generation. Supports **Amazon Bedrock** (Titan, SDXL) and **Google Gemini** (Imagen 3) as providers. Users submit prompts via Slack slash commands, receive AI-generated images, and can keep, discard, or regenerate them.
+
+**Slash Commands:**
+- `/generate <prompt>` - Generate 3 t-shirt graphics from a text prompt
+- `/ideate <theme>` - Generate 10 creative prompt ideas using Claude AI for inspiration
 
 ## Table of Contents
 
@@ -49,7 +53,7 @@ This application provides a streamlined workflow for generating t-shirt graphics
 | **Storage** | S3, DynamoDB |
 | **Messaging** | SQS |
 | **API** | API Gateway |
-| **AI Providers** | Amazon Bedrock, Google Gemini |
+| **AI Providers** | Amazon Bedrock, Google Gemini, Anthropic Claude |
 | **Observability** | [AWS Lambda Powertools](https://docs.powertools.aws.dev/lambda/typescript/) (Logger, Parameters) |
 | **Validation** | Zod |
 
@@ -160,6 +164,9 @@ This application provides a streamlined workflow for generating t-shirt graphics
 - **Amazon Bedrock** access enabled in your AWS account
 - Model access enabled for Titan Image Generator and/or Stability SDXL
 
+**For /ideate command (Claude AI):**
+- **Anthropic API key** from [Anthropic Console](https://console.anthropic.com/)
+
 **For Gemini provider (optional):**
 - **Google Cloud account** with Gemini API access
 - **Gemini API key** from [Google AI Studio](https://makersuite.google.com/app/apikey)
@@ -264,6 +271,11 @@ aws secretsmanager put-secret-value \
   --secret-id t-shirt-generator/slack-bot-token \
   --secret-string '{"value":"xoxb-your-bot-token-here"}'
 
+# Update Anthropic API key (required for /ideate command)
+aws secretsmanager put-secret-value \
+  --secret-id t-shirt-generator/anthropic-api-key \
+  --secret-string '{"value":"your-anthropic-api-key-here"}'
+
 # (Optional) If using Gemini provider, update API key
 aws secretsmanager put-secret-value \
   --secret-id t-shirt-generator/gemini-api-key \
@@ -292,15 +304,19 @@ Or update via the AWS Console in each Lambda function's configuration.
 3. Enter app name: `T-Shirt Generator`
 4. Select your workspace
 
-### 2. Configure Slash Command
+### 2. Configure Slash Commands
 
 1. Navigate to **Slash Commands** in the sidebar
-2. Click **Create New Command**
-3. Configure:
+2. Click **Create New Command** and configure `/generate`:
    - **Command**: `/generate`
    - **Request URL**: `https://<api-id>.execute-api.<region>.amazonaws.com/prod/slack/events`
    - **Short Description**: `Generate t-shirt graphics`
    - **Usage Hint**: `[your design prompt]`
+3. Click **Save**, then **Create New Command** again for `/ideate`:
+   - **Command**: `/ideate`
+   - **Request URL**: `https://<api-id>.execute-api.<region>.amazonaws.com/prod/slack/events`
+   - **Short Description**: `Generate creative prompt ideas`
+   - **Usage Hint**: `[theme keywords]`
 4. Click **Save**
 
 ### 3. Configure Interactive Components
@@ -332,7 +348,7 @@ Or update via the AWS Console in each Lambda function's configuration.
 
 ## Usage
 
-### Basic Usage
+### Generating Images
 
 In your designated Slack channel:
 
@@ -341,6 +357,16 @@ In your designated Slack channel:
 ```
 
 The bot will respond with a "Generating..." message, then post 3 images with action buttons.
+
+### Getting Prompt Ideas
+
+Need inspiration? Use the `/ideate` command to generate creative prompts:
+
+```
+/ideate retro gaming 80s
+```
+
+The bot will use Claude AI to generate 10 creative t-shirt design prompts based on your theme. Copy any prompt and use it with `/generate`.
 
 ### Action Buttons
 

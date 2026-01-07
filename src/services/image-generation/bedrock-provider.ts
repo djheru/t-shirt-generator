@@ -86,6 +86,21 @@ interface SDXLImageGenerationResponse {
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+// Style variations to create diverse outputs for each image
+const STYLE_VARIATIONS = [
+  'bold graphic illustration style with strong outlines and flat colors, screen-printed poster aesthetic',
+  'detailed realistic artistic style with rich textures and depth, fine art digital painting',
+  'minimalist modern style with clean geometric shapes and limited color palette, contemporary design',
+  'vintage retro aesthetic with weathered textures and nostalgic color tones, 70s 80s poster art',
+  'abstract stylized approach with dynamic composition and artistic interpretation',
+];
+
+const getStyledPrompt = (basePrompt: string, index: number, totalImages: number): string => {
+  if (totalImages <= 1) return basePrompt;
+  const styleHint = STYLE_VARIATIONS[index % STYLE_VARIATIONS.length];
+  return `${basePrompt}, ${styleHint}`;
+};
+
 const withRetry = async <T>(
   operation: () => Promise<T>,
   operationName: string
@@ -149,47 +164,60 @@ export const createBedrockProvider = (config: BedrockProviderConfig): ImageGener
   ): Promise<Buffer[]> => {
     // Calculate dimensions from aspect ratio, maximizing resolution
     const dimensions = aspectRatioToDimensions(params.aspectRatio, 'titan');
+    const images: Buffer[] = [];
 
-    const requestBody = {
-      taskType: 'TEXT_IMAGE',
-      textToImageParams: {
-        text: params.prompt,
-        ...(params.negativePrompt && { negativeText: params.negativePrompt }),
-      },
-      imageGenerationConfig: {
-        numberOfImages: params.imageCount,
-        width: params.width ?? dimensions.width,
-        height: params.height ?? dimensions.height,
-        cfgScale: params.cfgScale ?? 8.0,
-        ...(params.seed !== undefined && { seed: params.seed }),
-      },
-    };
+    // Generate images one at a time with style variations for diversity
+    for (let index = 0; index < params.imageCount; index++) {
+      const styledPrompt = getStyledPrompt(params.prompt, index, params.imageCount);
 
-    logger.debug('Titan request body', { requestBody });
+      const requestBody = {
+        taskType: 'TEXT_IMAGE',
+        textToImageParams: {
+          text: styledPrompt,
+          ...(params.negativePrompt && { negativeText: params.negativePrompt }),
+        },
+        imageGenerationConfig: {
+          numberOfImages: 1,
+          width: params.width ?? dimensions.width,
+          height: params.height ?? dimensions.height,
+          cfgScale: params.cfgScale ?? 8.0,
+          ...(params.seed !== undefined && { seed: params.seed + index }),
+        },
+      };
 
-    const command = new InvokeModelCommand({
-      modelId,
-      contentType: 'application/json',
-      accept: 'application/json',
-      body: JSON.stringify(requestBody),
-    });
+      logger.debug('Titan request body', { requestBody, imageIndex: index });
 
-    const response = await withRetry(
-      () => client.send(command),
-      'Titan image generation'
-    );
+      const command = new InvokeModelCommand({
+        modelId,
+        contentType: 'application/json',
+        accept: 'application/json',
+        body: JSON.stringify(requestBody),
+      });
 
-    const responseBody = JSON.parse(
-      new TextDecoder().decode(response.body)
-    ) as TitanImageGenerationResponse;
+      const response = await withRetry(
+        () => client.send(command),
+        `Titan image generation (${index + 1}/${params.imageCount})`
+      );
+
+      const responseBody = JSON.parse(
+        new TextDecoder().decode(response.body)
+      ) as TitanImageGenerationResponse;
+
+      if (responseBody.images.length > 0) {
+        images.push(Buffer.from(responseBody.images[0], 'base64'));
+      }
+
+      // Add delay between requests to avoid throttling
+      if (index < params.imageCount - 1) {
+        await sleep(1000);
+      }
+    }
 
     logger.info('Titan generation complete', {
-      imageCount: responseBody.images.length,
+      imageCount: images.length,
     });
 
-    return responseBody.images.map((base64Image) =>
-      Buffer.from(base64Image, 'base64')
-    );
+    return images;
   };
 
   const generateWithSDXL = async (
@@ -200,9 +228,11 @@ export const createBedrockProvider = (config: BedrockProviderConfig): ImageGener
     const images: Buffer[] = [];
 
     for (let index = 0; index < params.imageCount; index++) {
+      const styledPrompt = getStyledPrompt(params.prompt, index, params.imageCount);
+
       const requestBody = {
         text_prompts: [
-          { text: params.prompt, weight: 1.0 },
+          { text: styledPrompt, weight: 1.0 },
           ...(params.negativePrompt
             ? [{ text: params.negativePrompt, weight: -1.0 }]
             : []),

@@ -108,9 +108,12 @@ describe('Image Generation Types', () => {
       expect(result).toContain('NOT a mockup');
     });
 
-    it('should include transparency guidance by default', () => {
+    it('should include solid white background for post-processing transparency', () => {
+      // AI models cannot generate true alpha transparency, so we request solid white
+      // background which is then removed in post-processing
       const result = buildDTGPrompt('A cool dragon');
-      expect(result).toContain('transparent background');
+      expect(result).toContain('solid white background');
+      expect(result).toContain('#FFFFFF');
       expect(result).toContain('isolated graphic');
     });
 
@@ -168,6 +171,19 @@ describe('Image Generation Types', () => {
     it('should avoid human models', () => {
       const result = buildAvoidanceGuidance('A cool design');
       expect(result).toContain('human models');
+    });
+
+    it('should avoid checkered patterns and gradients for transparency prompts', () => {
+      const result = buildAvoidanceGuidance('A cool dragon');
+      expect(result).toContain('checkered patterns');
+      expect(result).toContain('gradient backgrounds');
+      expect(result).toContain('off-white');
+    });
+
+    it('should not avoid checkered patterns when solid background is requested', () => {
+      const result = buildAvoidanceGuidance('Logo on a white background');
+      expect(result).not.toContain('checkered patterns');
+      expect(result).not.toContain('gradient backgrounds');
     });
   });
 });
